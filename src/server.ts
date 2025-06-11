@@ -18,6 +18,7 @@ import { UserController } from './api/controllers/UserController';
 import { CartController } from './api/controllers/CartController';
 import { ProductController } from './api/controllers/ProductController';
 import { OrderController } from './api/controllers/OrderController';
+import { errorHandler, notFoundHandler } from './api/middleware/ErrorHandlerMiddleware';
 
 class Server {
   private app: express.Application;
@@ -134,36 +135,10 @@ class Server {
 
   private initializeErrorHandling(): void {
     // 404处理
-    this.app.use('*', (req, res) => {
-      res.status(404).json({
-        success: false,
-        message: '请求的资源不存在',
-        path: req.originalUrl,
-      });
-    });
+    this.app.use('*', notFoundHandler);
 
     // 全局错误处理中间件
-    this.app.use((error: Error, req: express.Request, res: express.Response, next: express.NextFunction) => {
-      console.error('全局错误:', error);
-      
-      // 检查是否是DDD领域错误
-      if (error.message.includes('不能为空') || 
-          error.message.includes('格式') ||
-          error.message.includes('已存在') ||
-          error.message.includes('不存在')) {
-        res.status(400).json({
-          success: false,
-          message: error.message,
-        });
-        return;
-      }
-
-      res.status(500).json({
-        success: false,
-        message: '服务器内部错误',
-        ...(environment.nodeEnv === 'development' && { stack: error.stack }),
-      });
-    });
+    this.app.use(errorHandler);
   }
 
   public async start(): Promise<void> {

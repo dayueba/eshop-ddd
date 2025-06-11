@@ -1,9 +1,11 @@
+import { injectable, inject } from 'inversify';
 import { UseCase } from '../../../../shared/application/UseCase';
 import { CartRepository } from '../../domain/repositories/CartRepository';
 import { ProductId } from '../../../product/domain/value-objects/ProductId';
 import { UserId } from '../../../user/domain/value-objects/UserId';
 import { Quantity } from '../../domain/value-objects/Quantity';
 import { Price } from '../../../product/domain/value-objects/Price';
+import { TYPES } from '../../../../config/container';
 
 interface AddItemToCartRequest {
   userId: string;
@@ -21,9 +23,10 @@ interface AddItemToCartResponse {
   totalPrice: number;
 }
 
+@injectable()
 export class AddItemToCartCommand implements UseCase<AddItemToCartRequest, AddItemToCartResponse> {
   constructor(
-    private readonly cartRepository: CartRepository
+    @inject(TYPES.CartRepository) private readonly cartRepository: CartRepository
   ) {}
 
   public async execute(request: AddItemToCartRequest): Promise<AddItemToCartResponse> {

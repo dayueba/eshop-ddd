@@ -1,6 +1,8 @@
+import { injectable, inject } from 'inversify';
 import { UseCase } from '../../../../shared/application/UseCase';
 import { CartRepository } from '../../domain/repositories/CartRepository';
 import { UserId } from '../../../user/domain/value-objects/UserId';
+import { TYPES } from '../../../../config/container';
 
 interface GetCartRequest {
   userId: string;
@@ -28,9 +30,10 @@ interface GetCartResponse {
   updatedAt: Date;
 }
 
+@injectable()
 export class GetCartQuery implements UseCase<GetCartRequest, GetCartResponse | null> {
   constructor(
-    private readonly cartRepository: CartRepository
+    @inject(TYPES.CartRepository) private readonly cartRepository: CartRepository
   ) {}
 
   public async execute(request: GetCartRequest): Promise<GetCartResponse | null> {

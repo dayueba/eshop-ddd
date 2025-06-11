@@ -1,7 +1,9 @@
+import { injectable, inject } from 'inversify';
 import { UseCase } from '../../../../shared/application/UseCase';
 import { CartRepository } from '../../domain/repositories/CartRepository';
 import { ProductId } from '../../../product/domain/value-objects/ProductId';
 import { UserId } from '../../../user/domain/value-objects/UserId';
+import { TYPES } from '../../../../config/container';
 
 interface RemoveItemFromCartRequest {
   userId: string;
@@ -15,9 +17,10 @@ interface RemoveItemFromCartResponse {
   totalPrice: number;
 }
 
+@injectable()
 export class RemoveItemFromCartCommand implements UseCase<RemoveItemFromCartRequest, RemoveItemFromCartResponse> {
   constructor(
-    private readonly cartRepository: CartRepository
+    @inject(TYPES.CartRepository) private readonly cartRepository: CartRepository
   ) {}
 
   public async execute(request: RemoveItemFromCartRequest): Promise<RemoveItemFromCartResponse> {

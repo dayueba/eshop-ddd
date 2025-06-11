@@ -1,13 +1,16 @@
 import { Request, Response } from 'express';
+import { injectable, inject } from 'inversify';
 import { AddItemToCartCommand } from '../../contexts/cart/application/commands/AddItemToCartCommand';
 import { RemoveItemFromCartCommand } from '../../contexts/cart/application/commands/RemoveItemFromCartCommand';
 import { GetCartQuery } from '../../contexts/cart/application/queries/GetCartQuery';
+import { TYPES } from '../../config/container';
 
+@injectable()
 export class CartController {
   constructor(
-    private readonly addItemToCartCommand: AddItemToCartCommand,
-    private readonly removeItemFromCartCommand: RemoveItemFromCartCommand,
-    private readonly getCartQuery: GetCartQuery
+    @inject(TYPES.AddItemToCartCommand) private readonly addItemToCartCommand: AddItemToCartCommand,
+    @inject(TYPES.RemoveItemFromCartCommand) private readonly removeItemFromCartCommand: RemoveItemFromCartCommand,
+    @inject(TYPES.GetCartQuery) private readonly getCartQuery: GetCartQuery
   ) {}
 
   public async getCart(req: Request, res: Response): Promise<void> {

@@ -1,7 +1,9 @@
+import { injectable, inject } from 'inversify';
 import { UseCase } from '@shared/application/UseCase';
 import { UserRepository } from '../../domain/repositories/UserRepository';
 import { Email } from '../../domain/value-objects/Email';
 import { EventBus } from '@shared/infrastructure/EventBus';
+import { TYPES } from '../../../../config/container';
 import jwt from 'jsonwebtoken';
 import { config } from '@config/environment';
 
@@ -21,10 +23,11 @@ export interface LoginUserResponse {
   };
 }
 
+@injectable()
 export class LoginUserCommand implements UseCase<LoginUserRequest, LoginUserResponse> {
   constructor(
-    private userRepository: UserRepository,
-    private eventBus: EventBus
+    @inject(TYPES.UserRepository) private userRepository: UserRepository,
+    @inject(TYPES.EventBus) private eventBus: EventBus
   ) {}
 
   public async execute(request: LoginUserRequest): Promise<LoginUserResponse> {

@@ -1,0 +1,735 @@
+---
+description:
+globs:
+alwaysApply: false
+---
+# 测试指南
+
+## 测试策略概述
+
+项目采用测试驱动开发(TDD)和行为驱动开发(BDD)相结合的测试策略，确保代码质量和业务正确性。
+
+## 测试配置
+
+### Jest配置
+项目配置文件：[package.json](mdc:package.json)
+
+```json
+{
+  "scripts": {
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage"
+  },
+  "jest": {
+    "preset": "ts-jest",
+    "testEnvironment": "node",
+    "roots": ["<rootDir>/src"],
+    "testMatch": ["**/__tests__/**/*.test.ts"],
+    "collectCoverageFrom": [
+      "src/**/*.ts",
+      "!src/**/*.d.ts",
+      "!src/server.ts"
+    ]
+  }
+}
+```
+
+### TypeScript配置
+使用 [tsconfig.json](mdc:tsconfig.json) 的严格模式确保类型安全。
+
+## 测试层次结构
+
+### 1. 单元测试 (Unit Tests)
+测试单个类或函数的功能，主要测试领域层组件。
+
+#### 值对象测试
+参考：[Email.test.ts](mdc:src/__tests__/user/domain/value-objects/Email.test.ts)
+
+```typescript
+import { Email } from '../../../../contexts/user/domain/value-objects/Email';
+
+describe('Email', () => {
+  describe('创建邮箱', () => {
+    it('应该成功创建有效邮箱', () => {
+      const email = new Email('user@example.com');
+      expect(email.getValue()).toBe('user@example.com');
+    });
+
+    it('应该对邮箱进行标准化处理', () => {
+      const email = new Email('  USER@EXAMPLE.COM  ');
+      expect(email.getValue()).toBe('user@example.com');
+    });
+  });
+
+  describe('邮箱验证', () => {
+    it('应该拒绝无效邮箱格式', () => {
+      expect(() => new Email('invalid-email')).toThrow('邮箱格式无效');
+      expect(() => new Email('')).toThrow('邮箱不能为空');
+      expect(() => new Email('@example.com')).toThrow('邮箱格式无效');
+    });
+
+    it('应该拒绝过长的邮箱', () => {
+      const longEmail = 'a'.repeat(256) + '@example.com';
+      expect(() => new Email(longEmail)).toThrow('邮箱长度不能超过255个字符');
+    });
+  });
+
+  describe('邮箱比较', () => {
+    it('相同邮箱应该相等', () => {
+      const email1 = new Email('user@example.com');
+      const email2 = new Email('USER@EXAMPLE.COM');
+      expect(email1.equals(email2)).toBe(true);
+    });
+
+    it('不同邮箱应该不相等', () => {
+      const email1 = new Email('user1@example.com');
+      const email2 = new Email('user2@example.com');
+      expect(email1.equals(email2)).toBe(false);
+    });
+  });
+});
+```
+
+#### 聚合根测试
+```typescript
+import { User } from '../../../../contexts/user/domain/aggregates/User';
+import { Email } from '../../../../contexts/user/domain/value-objects/Email';
+import { Password } from '../../../../contexts/user/domain/value-objects/Password';
+
+describe('User', () => {
+  let validEmail: Email;
+  let validPassword: Password;
+
+  beforeEach(() => {
+    validEmail = new Email('user@example.com');
+    validPassword = new Password('SecurePass123!');
+  });
+
+  describe('用户创建', () => {
+    it('应该成功创建用户', () => {
+      const user = User.create(validEmail, validPassword, '张', '三');
+      
+      expect(user.getEmail().equals(validEmail)).toBe(true);
+      expect(user.getFirstName()).toBe('张');
+      expect(user.getLastName()).toBe('三');
+      expect(user.isActive()).toBe(true);
+    });
+
+    it('创建用户时应该发布UserRegisteredEvent', () => {
+      const user = User.create(validEmail, validPassword, '张', '三');
+      const events = user.getUncommittedEvents();
+      
+      expect(events).toHaveLength(1);
+      expect(events[0].constructor.name).toBe('UserRegisteredEvent');
+    });
+  });
+
+  describe('密码验证', () => {
+    it('应该验证正确的密码', () => {
+      const user = User.create(validEmail, validPassword, '张', '三');
+      const isValid = user.verifyPassword('SecurePass123!');
+      
+      expect(isValid).toBe(true);
+    });
+
+    it('应该拒绝错误的密码', () => {
+      const user = User.create(validEmail, validPassword, '张', '三');
+      const isValid = user.verifyPassword('wrongpassword');
+      
+      expect(isValid).toBe(false);
+    });
+  });
+});
+```
+
+### 2. 集成测试 (Integration Tests)
+测试组件间的协作，主要测试应用层服务。
+
+```typescript
+import { RegisterUserCommand } from '../../../../contexts/user/application/commands/RegisterUserCommand';
+import { InMemoryUserRepository } from '../../../doubles/InMemoryUserRepository';
+import { InMemoryEventBus } from '../../../doubles/InMemoryEventBus';
+
+describe('RegisterUserCommand', () => {
+  let command: RegisterUserCommand;
+  let userRepository: InMemoryUserRepository;
+  let eventBus: InMemoryEventBus;
+
+  beforeEach(() => {
+    userRepository = new InMemoryUserRepository();
+    eventBus = new InMemoryEventBus();
+    command = new RegisterUserCommand(userRepository, eventBus);
+  });
+
+  it('应该成功注册新用户', async () => {
+    const request = {
+      email: 'newuser@example.com',
+      password: 'SecurePass123!',
+      firstName: '张',
+      lastName: '三'
+    };
+
+    const result = await command.execute(request);
+
+    expect(result.success).toBe(true);
+    expect(result.data.email).toBe('newuser@example.com');
+    
+    const savedUser = await userRepository.findByEmail(new Email(request.email));
+    expect(savedUser).toBeDefined();
+  });
+
+  it('应该拒绝重复的邮箱', async () => {
+    const existingUser = User.create(
+      new Email('existing@example.com'),
+      new Password('SecurePass123!'),
+      '李',
+      '四'
+    );
+    await userRepository.save(existingUser);
+
+    const request = {
+      email: 'existing@example.com',
+      password: 'AnotherPass123!',
+      firstName: '王',
+      lastName: '五'
+    };
+
+    await expect(command.execute(request)).rejects.toThrow('邮箱已存在');
+  });
+
+  it('应该发布UserRegisteredEvent', async () => {
+    const request = {
+      email: 'newuser@example.com',
+      password: 'SecurePass123!',
+      firstName: '张',
+      lastName: '三'
+    };
+
+    await command.execute(request);
+
+    const publishedEvents = eventBus.getPublishedEvents();
+    expect(publishedEvents).toHaveLength(1);
+    expect(publishedEvents[0].constructor.name).toBe('UserRegisteredEvent');
+  });
+});
+```
+
+### 3. API测试 (API Tests)
+测试HTTP接口的完整流程。
+
+```typescript
+import request from 'supertest';
+import { Express } from 'express';
+import { createTestApp } from '../../../setup/testApp';
+import { testDatabase } from '../../../setup/testDatabase';
+
+describe('User API', () => {
+  let app: Express;
+
+  beforeAll(async () => {
+    await testDatabase.connect();
+    app = await createTestApp();
+  });
+
+  afterAll(async () => {
+    await testDatabase.disconnect();
+  });
+
+  beforeEach(async () => {
+    await testDatabase.clearCollections();
+  });
+
+  describe('POST /api/users/register', () => {
+    it('应该成功注册用户', async () => {
+      const userData = {
+        email: 'test@example.com',
+        password: 'SecurePass123!',
+        firstName: '张',
+        lastName: '三'
+      };
+
+      const response = await request(app)
+        .post('/api/users/register')
+        .send(userData)
+        .expect(201);
+
+      expect(response.body.success).toBe(true);
+      expect(response.body.message).toBe('用户注册成功');
+      expect(response.body.data).toHaveProperty('id');
+      expect(response.body.data.email).toBe(userData.email);
+    });
+
+    it('应该验证必填字段', async () => {
+      const invalidData = {
+        email: 'invalid-email',
+        password: '123', // 太短
+        firstName: '',   // 空值
+        // lastName 缺失
+      };
+
+      const response = await request(app)
+        .post('/api/users/register')
+        .send(invalidData)
+        .expect(400);
+
+      expect(response.body.success).toBe(false);
+      expect(response.body.message).toBe('输入验证失败');
+      expect(response.body.errors).toBeInstanceOf(Array);
+      expect(response.body.errors.length).toBeGreaterThan(0);
+    });
+
+    it('应该拒绝重复邮箱', async () => {
+      const userData = {
+        email: 'duplicate@example.com',
+        password: 'SecurePass123!',
+        firstName: '张',
+        lastName: '三'
+      };
+
+      // 第一次注册
+      await request(app)
+        .post('/api/users/register')
+        .send(userData)
+        .expect(201);
+
+      // 第二次注册相同邮箱
+      const response = await request(app)
+        .post('/api/users/register')
+        .send(userData)
+        .expect(409);
+
+      expect(response.body.success).toBe(false);
+      expect(response.body.message).toBe('邮箱已存在');
+    });
+  });
+
+  describe('POST /api/users/login', () => {
+    beforeEach(async () => {
+      // 预先注册一个用户
+      await request(app)
+        .post('/api/users/register')
+        .send({
+          email: 'login@example.com',
+          password: 'SecurePass123!',
+          firstName: '测',
+          lastName: '试'
+        });
+    });
+
+    it('应该成功登录', async () => {
+      const loginData = {
+        email: 'login@example.com',
+        password: 'SecurePass123!'
+      };
+
+      const response = await request(app)
+        .post('/api/users/login')
+        .send(loginData)
+        .expect(200);
+
+      expect(response.body.success).toBe(true);
+      expect(response.body.data).toHaveProperty('token');
+      expect(response.body.data).toHaveProperty('user');
+    });
+
+    it('应该拒绝错误的密码', async () => {
+      const loginData = {
+        email: 'login@example.com',
+        password: 'wrongpassword'
+      };
+
+      const response = await request(app)
+        .post('/api/users/login')
+        .send(loginData)
+        .expect(401);
+
+      expect(response.body.success).toBe(false);
+      expect(response.body.message).toBe('邮箱或密码错误');
+    });
+  });
+
+  describe('GET /api/users/profile', () => {
+    let authToken: string;
+
+    beforeEach(async () => {
+      // 注册并登录获取token
+      await request(app)
+        .post('/api/users/register')
+        .send({
+          email: 'profile@example.com',
+          password: 'SecurePass123!',
+          firstName: '档',
+          lastName: '案'
+        });
+
+      const loginResponse = await request(app)
+        .post('/api/users/login')
+        .send({
+          email: 'profile@example.com',
+          password: 'SecurePass123!'
+        });
+
+      authToken = loginResponse.body.data.token;
+    });
+
+    it('应该返回用户信息', async () => {
+      const response = await request(app)
+        .get('/api/users/profile')
+        .set('Authorization', `Bearer ${authToken}`)
+        .expect(200);
+
+      expect(response.body.success).toBe(true);
+      expect(response.body.data.email).toBe('profile@example.com');
+      expect(response.body.data.firstName).toBe('档');
+      expect(response.body.data.lastName).toBe('案');
+    });
+
+    it('应该拒绝未认证的请求', async () => {
+      const response = await request(app)
+        .get('/api/users/profile')
+        .expect(401);
+
+      expect(response.body.success).toBe(false);
+      expect(response.body.message).toBe('未提供认证令牌');
+    });
+
+    it('应该拒绝无效的token', async () => {
+      const response = await request(app)
+        .get('/api/users/profile')
+        .set('Authorization', 'Bearer invalid-token')
+        .expect(401);
+
+      expect(response.body.success).toBe(false);
+      expect(response.body.message).toBe('无效的认证令牌');
+    });
+  });
+});
+```
+
+## 测试工具和模式
+
+### 测试替身 (Test Doubles)
+
+#### 内存仓储实现
+```typescript
+// src/__tests__/doubles/InMemoryUserRepository.ts
+import { User } from '../../contexts/user/domain/aggregates/User';
+import { Email } from '../../contexts/user/domain/value-objects/Email';
+import { UserRepository } from '../../contexts/user/domain/repositories/UserRepository';
+
+export class InMemoryUserRepository implements UserRepository {
+  private users: Map<string, User> = new Map();
+
+  async save(user: User): Promise<void> {
+    this.users.set(user.id.getValue(), user);
+  }
+
+  async findById(id: string): Promise<User | null> {
+    return this.users.get(id) || null;
+  }
+
+  async findByEmail(email: Email): Promise<User | null> {
+    for (const user of this.users.values()) {
+      if (user.getEmail().equals(email)) {
+        return user;
+      }
+    }
+    return null;
+  }
+
+  async exists(email: Email): Promise<boolean> {
+    return (await this.findByEmail(email)) !== null;
+  }
+
+  // 测试辅助方法
+  clear(): void {
+    this.users.clear();
+  }
+
+  getAllUsers(): User[] {
+    return Array.from(this.users.values());
+  }
+}
+```
+
+#### 事件总线Mock
+```typescript
+// src/__tests__/doubles/InMemoryEventBus.ts
+import { DomainEvent } from '../../shared/domain/DomainEvent';
+import { EventBus } from '../../shared/infrastructure/EventBus';
+
+export class InMemoryEventBus implements EventBus {
+  private publishedEvents: DomainEvent[] = [];
+
+  async publish(event: DomainEvent): Promise<void> {
+    this.publishedEvents.push(event);
+  }
+
+  getPublishedEvents(): DomainEvent[] {
+    return [...this.publishedEvents];
+  }
+
+  clear(): void {
+    this.publishedEvents = [];
+  }
+}
+```
+
+### 测试数据工厂
+```typescript
+// src/__tests__/factories/UserFactory.ts
+import { User } from '../../contexts/user/domain/aggregates/User';
+import { Email } from '../../contexts/user/domain/value-objects/Email';
+import { Password } from '../../contexts/user/domain/value-objects/Password';
+
+export class UserFactory {
+  static create(overrides: Partial<{
+    email: string;
+    password: string;
+    firstName: string;
+    lastName: string;
+  }> = {}): User {
+    const defaults = {
+      email: 'test@example.com',
+      password: 'SecurePass123!',
+      firstName: '测',
+      lastName: '试'
+    };
+
+    const data = { ...defaults, ...overrides };
+
+    return User.create(
+      new Email(data.email),
+      new Password(data.password),
+      data.firstName,
+      data.lastName
+    );
+  }
+
+  static createMultiple(count: number): User[] {
+    return Array.from({ length: count }, (_, index) =>
+      this.create({
+        email: `user${index + 1}@example.com`,
+        firstName: `用户${index + 1}`,
+        lastName: '测试'
+      })
+    );
+  }
+}
+```
+
+### 测试设置工具
+
+#### 测试应用创建
+```typescript
+// src/__tests__/setup/testApp.ts
+import express, { Express } from 'express';
+import { userRoutes } from '../../api/routes/UserRoutes';
+import { UserController } from '../../api/controllers/UserController';
+import { RegisterUserCommand } from '../../contexts/user/application/commands/RegisterUserCommand';
+import { LoginUserCommand } from '../../contexts/user/application/commands/LoginUserCommand';
+import { InMemoryUserRepository } from '../doubles/InMemoryUserRepository';
+import { InMemoryEventBus } from '../doubles/InMemoryEventBus';
+
+export async function createTestApp(): Promise<Express> {
+  const app = express();
+  
+  // 中间件设置
+  app.use(express.json());
+  
+  // 创建测试依赖
+  const userRepository = new InMemoryUserRepository();
+  const eventBus = new InMemoryEventBus();
+  
+  // 创建应用服务
+  const registerUser = new RegisterUserCommand(userRepository, eventBus);
+  const loginUser = new LoginUserCommand(userRepository);
+  
+  // 创建控制器
+  const userController = new UserController(registerUser, loginUser);
+  
+  // 注册路由
+  app.use('/api/users', userRoutes(userController));
+  
+  return app;
+}
+```
+
+#### 测试数据库管理
+```typescript
+// src/__tests__/setup/testDatabase.ts
+import { MongoMemoryServer } from 'mongodb-memory-server';
+import mongoose from 'mongoose';
+
+class TestDatabase {
+  private mongoServer?: MongoMemoryServer;
+
+  async connect(): Promise<void> {
+    this.mongoServer = await MongoMemoryServer.create();
+    const uri = this.mongoServer.getUri();
+    await mongoose.connect(uri);
+  }
+
+  async disconnect(): Promise<void> {
+    await mongoose.disconnect();
+    if (this.mongoServer) {
+      await this.mongoServer.stop();
+    }
+  }
+
+  async clearCollections(): Promise<void> {
+    const collections = mongoose.connection.collections;
+    for (const key in collections) {
+      await collections[key].deleteMany({});
+    }
+  }
+}
+
+export const testDatabase = new TestDatabase();
+```
+
+## 测试覆盖率
+
+### 覆盖率目标
+- 总体覆盖率：≥90%
+- 领域层：≥95%
+- 应用层：≥90%
+- API层：≥85%
+
+### 覆盖率配置
+```json
+{
+  "jest": {
+    "collectCoverageFrom": [
+      "src/contexts/**/*.ts",
+      "src/shared/**/*.ts",
+      "src/api/**/*.ts",
+      "!src/**/*.test.ts",
+      "!src/**/*.d.ts"
+    ],
+    "coverageThreshold": {
+      "global": {
+        "branches": 90,
+        "functions": 90,
+        "lines": 90,
+        "statements": 90
+      },
+      "src/contexts/**/domain/**": {
+        "branches": 95,
+        "functions": 95,
+        "lines": 95,
+        "statements": 95
+      }
+    }
+  }
+}
+```
+
+## 测试最佳实践
+
+### 1. 测试命名
+```typescript
+// 好的测试名称
+describe('Email值对象', () => {
+  it('应该成功创建有效的邮箱地址', () => {});
+  it('当邮箱格式无效时应该抛出异常', () => {});
+  it('应该对邮箱地址进行标准化处理', () => {});
+});
+
+// 避免的测试名称
+describe('Email', () => {
+  it('test1', () => {});
+  it('should work', () => {});
+  it('creates email', () => {});
+});
+```
+
+### 2. 测试结构 (AAA模式)
+```typescript
+it('应该成功创建用户', () => {
+  // Arrange - 准备测试数据
+  const email = new Email('test@example.com');
+  const password = new Password('SecurePass123!');
+  
+  // Act - 执行操作
+  const user = User.create(email, password, '张', '三');
+  
+  // Assert - 验证结果
+  expect(user.getEmail().equals(email)).toBe(true);
+  expect(user.getFirstName()).toBe('张');
+  expect(user.isActive()).toBe(true);
+});
+```
+
+### 3. 测试隔离
+```typescript
+describe('UserRepository', () => {
+  let repository: InMemoryUserRepository;
+  
+  beforeEach(() => {
+    // 每个测试都使用新的仓储实例
+    repository = new InMemoryUserRepository();
+  });
+  
+  // 测试方法...
+});
+```
+
+### 4. 错误测试
+```typescript
+it('当密码不符合要求时应该抛出异常', () => {
+  expect(() => new Password('123')).toThrow('密码长度不能少于8位');
+  expect(() => new Password('onlylowercase')).toThrow('密码必须包含大写字母');
+  expect(() => new Password('ONLYUPPERCASE')).toThrow('密码必须包含小写字母');
+});
+```
+
+### 5. 异步测试
+```typescript
+it('应该成功保存用户', async () => {
+  const user = UserFactory.create();
+  
+  await repository.save(user);
+  
+  const foundUser = await repository.findById(user.id.getValue());
+  expect(foundUser).toBeDefined();
+  expect(foundUser!.getEmail().equals(user.getEmail())).toBe(true);
+});
+```
+
+## 持续集成
+
+### GitHub Actions配置
+```yaml
+# .github/workflows/test.yml
+name: Tests
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v2
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v2
+      with:
+        node-version: '18'
+        
+    - name: Install dependencies
+      run: npm ci
+      
+    - name: Run tests
+      run: npm test
+      
+    - name: Generate coverage report
+      run: npm run test:coverage
+      
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v2
+```
+
+通过这套完整的测试体系，确保代码质量和业务逻辑的正确性，为项目的可靠性和可维护性提供保障。

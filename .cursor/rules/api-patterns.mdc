@@ -1,0 +1,408 @@
+---
+description:
+globs:
+alwaysApply: false
+---
+# API开发模式
+
+## RESTful API设计规范
+
+### 资源命名
+- 使用名词复数形式：`/users`、`/products`、`/orders`
+- 使用层级结构：`/users/{userId}/orders`
+- 避免动词：使用HTTP方法表示操作
+
+### HTTP方法使用
+```
+GET    /users          - 获取用户列表
+GET    /users/{id}     - 获取特定用户
+POST   /users          - 创建新用户
+PUT    /users/{id}     - 完整更新用户
+PATCH  /users/{id}     - 部分更新用户
+DELETE /users/{id}     - 删除用户
+```
+
+### 状态码规范
+- `200 OK` - 成功返回数据
+- `201 Created` - 成功创建资源
+- `204 No Content` - 成功但无返回内容
+- `400 Bad Request` - 请求参数错误
+- `401 Unauthorized` - 未认证
+- `403 Forbidden` - 已认证但无权限
+- `404 Not Found` - 资源不存在
+- `409 Conflict` - 资源冲突
+- `422 Unprocessable Entity` - 验证失败
+- `500 Internal Server Error` - 服务器错误
+
+## 控制器设计模式
+
+### 基本结构
+参考：[UserController.ts](mdc:src/api/controllers/UserController.ts)
+
+```typescript
+export class UserController {
+  constructor(
+    private readonly registerUser: RegisterUserCommand,
+    private readonly loginUser: LoginUserCommand
+  ) {}
+
+  public async register(req: Request, res: Response): Promise<void> {
+    try {
+      const command = new RegisterUserCommand(req.body);
+      const result = await this.registerUser.execute(command);
+      
+      res.status(201).json({
+        success: true,
+        message: '用户注册成功',
+        data: result
+      });
+    } catch (error) {
+      this.handleError(error, res);
+    }
+  }
+}
+```
+
+### 依赖注入
+- 通过构造函数注入应用服务
+- 避免在控制器中直接创建依赖
+- 保持控制器轻量级
+
+### 错误处理
+```typescript
+private handleError(error: Error, res: Response): void {
+  if (error instanceof InvalidEmailError) {
+    res.status(400).json({
+      success: false,
+      message: error.message
+    });
+  } else if (error instanceof UserAlreadyExistsError) {
+    res.status(409).json({
+      success: false,
+      message: error.message
+    });
+  } else {
+    res.status(500).json({
+      success: false,
+      message: '服务器内部错误'
+    });
+  }
+}
+```
+
+## 中间件模式
+
+### 认证中间件
+参考：[AuthMiddleware.ts](mdc:src/api/middleware/AuthMiddleware.ts)
+
+```typescript
+export const authMiddleware = (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const token = req.headers.authorization?.replace('Bearer ', '');
+    if (!token) {
+      return res.status(401).json({ message: '未提供认证令牌' });
+    }
+
+    const decoded = jwt.verify(token, environment.jwtSecret);
+    req.user = decoded;
+    next();
+  } catch (error) {
+    res.status(401).json({ message: '无效的认证令牌' });
+  }
+};
+```
+
+### 验证中间件
+参考：[ValidationMiddleware.ts](mdc:src/api/middleware/ValidationMiddleware.ts)
+
+```typescript
+export const validate = (schema: Joi.ObjectSchema) => {
+  return (req: Request, res: Response, next: NextFunction) => {
+    const { error, value } = schema.validate(req.body);
+    
+    if (error) {
+      return res.status(400).json({
+        success: false,
+        message: '输入验证失败',
+        errors: error.details.map(detail => detail.message)
+      });
+    }
+    
+    req.body = value;
+    next();
+  };
+};
+```
+
+## 路由组织模式
+
+### 路由模块化
+参考：[UserRoutes.ts](mdc:src/api/routes/UserRoutes.ts)
+
+```typescript
+export const userRoutes = (userController: UserController) => {
+  const router = express.Router();
+
+  /**
+   * @swagger
+   * /api/users/register:
+   *   post:
+   *     summary: 用户注册
+   *     tags: [Users]
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             $ref: '#/components/schemas/RegisterUserRequest'
+   */
+  router.post('/register', 
+    validate(registerUserSchema),
+    userController.register.bind(userController)
+  );
+
+  return router;
+};
+```
+
+### 路由分组
+```typescript
+// 主路由文件
+app.use('/api/users', userRoutes(userController));
+app.use('/api/products', productRoutes(productController));
+app.use('/api/orders', orderRoutes(orderController));
+```
+
+## 请求响应模式
+
+### 标准化响应格式
+```typescript
+interface ApiResponse<T = any> {
+  success: boolean;
+  message: string;
+  data?: T;
+  errors?: string[];
+  pagination?: {
+    page: number;
+    limit: number;
+    total: number;
+    totalPages: number;
+  };
+}
+```
+
+### 成功响应示例
+```json
+{
+  "success": true,
+  "message": "操作成功",
+  "data": {
+    "id": "user123",
+    "email": "user@example.com",
+    "firstName": "张",
+    "lastName": "三"
+  }
+}
+```
+
+### 错误响应示例
+```json
+{
+  "success": false,
+  "message": "输入验证失败",
+  "errors": [
+    "邮箱格式无效",
+    "密码长度不能少于8位"
+  ]
+}
+```
+
+### 分页响应示例
+```json
+{
+  "success": true,
+  "message": "获取用户列表成功",
+  "data": [
+    { "id": "1", "email": "user1@example.com" },
+    { "id": "2", "email": "user2@example.com" }
+  ],
+  "pagination": {
+    "page": 1,
+    "limit": 10,
+    "total": 25,
+    "totalPages": 3
+  }
+}
+```
+
+## 输入验证模式
+
+### Joi Schema定义
+```typescript
+export const registerUserSchema = Joi.object({
+  email: Joi.string().email().required().messages({
+    'string.email': '邮箱格式无效',
+    'any.required': '邮箱为必填项'
+  }),
+  password: Joi.string().min(8).pattern(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/).required().messages({
+    'string.min': '密码长度不能少于8位',
+    'string.pattern.base': '密码必须包含大小写字母和数字',
+    'any.required': '密码为必填项'
+  }),
+  firstName: Joi.string().required().messages({
+    'any.required': '姓氏为必填项'
+  }),
+  lastName: Joi.string().required().messages({
+    'any.required': '名字为必填项'
+  })
+});
+```
+
+### 查询参数验证
+```typescript
+export const getUsersQuerySchema = Joi.object({
+  page: Joi.number().integer().min(1).default(1),
+  limit: Joi.number().integer().min(1).max(100).default(10),
+  search: Joi.string().optional(),
+  sortBy: Joi.string().valid('createdAt', 'email', 'name').default('createdAt'),
+  sortOrder: Joi.string().valid('asc', 'desc').default('desc')
+});
+```
+
+## Swagger文档模式
+
+### API文档注释
+```typescript
+/**
+ * @swagger
+ * components:
+ *   schemas:
+ *     User:
+ *       type: object
+ *       properties:
+ *         id:
+ *           type: string
+ *           description: 用户唯一标识
+ *         email:
+ *           type: string
+ *           format: email
+ *           description: 用户邮箱
+ */
+
+/**
+ * @swagger
+ * /api/users/{id}:
+ *   get:
+ *     summary: 获取用户信息
+ *     tags: [Users]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: 用户ID
+ *     responses:
+ *       200:
+ *         description: 成功返回用户信息
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiResponse'
+ */
+```
+
+## 安全模式
+
+### JWT认证
+```typescript
+// 生成Token
+const token = jwt.sign(
+  { userId: user.id, email: user.email },
+  environment.jwtSecret,
+  { expiresIn: '7d' }
+);
+
+// 验证Token
+const decoded = jwt.verify(token, environment.jwtSecret) as JwtPayload;
+```
+
+### 输入清理
+```typescript
+// 使用validator.js清理输入
+import validator from 'validator';
+
+const sanitizedEmail = validator.normalizeEmail(email) || '';
+const escapedName = validator.escape(name);
+```
+
+### 限流保护
+```typescript
+import rateLimit from 'express-rate-limit';
+
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15分钟
+  max: 100, // 最多100个请求
+  message: '请求过于频繁，请稍后再试'
+});
+
+app.use('/api/', apiLimiter);
+```
+
+## 错误处理模式
+
+### 全局错误处理
+```typescript
+app.use((error: Error, req: Request, res: Response, next: NextFunction) => {
+  console.error('Global error:', error);
+  
+  if (error instanceof ValidationError) {
+    return res.status(400).json({
+      success: false,
+      message: '输入验证失败',
+      errors: error.details
+    });
+  }
+  
+  res.status(500).json({
+    success: false,
+    message: '服务器内部错误'
+  });
+});
+```
+
+### 异步错误捕获
+```typescript
+const asyncHandler = (fn: Function) => {
+  return (req: Request, res: Response, next: NextFunction) => {
+    Promise.resolve(fn(req, res, next)).catch(next);
+  };
+};
+
+// 使用
+router.get('/users', asyncHandler(userController.getUsers));
+```
+
+## 性能优化模式
+
+### 响应压缩
+```typescript
+import compression from 'compression';
+app.use(compression());
+```
+
+### 缓存控制
+```typescript
+app.get('/api/users/:id', (req, res) => {
+  res.set('Cache-Control', 'public, max-age=300'); // 缓存5分钟
+  // 返回数据
+});
+```
+
+### 请求日志
+```typescript
+import morgan from 'morgan';
+app.use(morgan('combined'));
+```

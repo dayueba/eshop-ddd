@@ -46,6 +46,11 @@ import { EventStore } from '../shared/domain/EventStore';
 import { MongoEventStore } from '../shared/infrastructure/MongoEventStore';
 import { eventDrivenConfig } from './event-config';
 
+// 领域服务
+import { InventoryService } from '../contexts/product/domain/services/InventoryService';
+import { OrderPricingService } from '../contexts/order/domain/services/OrderPricingService';
+import { UserUniquenessService } from '../contexts/user/domain/services/UserUniquenessService';
+
 // 定义容器标识符
 export const TYPES = {
   // 用户模块
@@ -84,7 +89,12 @@ export const TYPES = {
 
   // 共享服务
   EventBus: Symbol.for('EventBus'),
-  EventStore: Symbol.for('EventStore')
+  EventStore: Symbol.for('EventStore'),
+
+  // 领域服务
+  InventoryService: Symbol.for('InventoryService'),
+  OrderPricingService: Symbol.for('OrderPricingService'),
+  UserUniquenessService: Symbol.for('UserUniquenessService')
 };
 
 // 创建容器
@@ -129,5 +139,10 @@ container.bind<EventStore>(TYPES.EventStore).to(MongoEventStore).inSingletonScop
 container.bind<EventBus>(TYPES.EventBus).toDynamicValue(() => {
   return eventDrivenConfig.getEventBus();
 }).inSingletonScope();
+
+// 绑定领域服务
+container.bind<InventoryService>(TYPES.InventoryService).to(InventoryService).inSingletonScope();
+container.bind<OrderPricingService>(TYPES.OrderPricingService).to(OrderPricingService).inSingletonScope();
+container.bind<UserUniquenessService>(TYPES.UserUniquenessService).to(UserUniquenessService).inSingletonScope();
 
 export { container }; 

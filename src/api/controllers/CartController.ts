@@ -182,21 +182,23 @@ export class CartController {
     }
   }
 
-  private handleError(error: Error, res: Response): void {
+  private handleError(error: unknown, res: Response): void {
     console.error('Cart controller error:', error);
     
-    if (error.message.includes('不能为空') || 
-        error.message.includes('格式') ||
-        error.message.includes('必须大于0')) {
+    const errorMessage = error instanceof Error ? error.message : '未知错误';
+    
+    if (errorMessage.includes('不能为空') || 
+        errorMessage.includes('格式') ||
+        errorMessage.includes('必须大于0')) {
       res.status(400).json({
         success: false,
-        message: error.message
+        message: errorMessage
       });
-    } else if (error.message.includes('未找到') || 
-               error.message.includes('不存在')) {
+    } else if (errorMessage.includes('未找到') || 
+               errorMessage.includes('不存在')) {
       res.status(404).json({
         success: false,
-        message: error.message
+        message: errorMessage
       });
     } else {
       res.status(500).json({
